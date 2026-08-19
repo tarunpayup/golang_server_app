@@ -102,6 +102,7 @@ func StartLoginServer(port string) error {
 	// --------------------------------------------------------
 
 	mux.HandleFunc("/health", HealthHandler)
+	mux.HandleFunc("/hello", HelloHandler)
 
 	// --------------------------------------------------------
 	// Authentication
@@ -140,35 +141,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-// ============================================================
-// HEALTH API
-// ============================================================
-
-func HealthHandler(w http.ResponseWriter, r *http.Request) {
-
-	if r.Method != http.MethodGet {
-
-		writeJSON(
-			w,
-			http.StatusMethodNotAllowed,
-			ErrorResponse{
-				Error: "method not allowed",
-			},
-		)
-
-		return
-	}
-
-	writeJSON(
-		w,
-		http.StatusOK,
-		map[string]string{
-			"status":  "ok",
-			"service": "CAOS Authentication API",
-		},
-	)
 }
 
 // ============================================================
