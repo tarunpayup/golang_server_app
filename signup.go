@@ -40,6 +40,7 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if databaseURL == "" {
+
 		writeJSON(
 			w,
 			http.StatusInternalServerError,
@@ -74,11 +75,13 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
+
 		writeJSON(
 			w,
 			http.StatusInternalServerError,
-			ErrorResponse{
-				Error: "could not open database connection",
+			map[string]any{
+				"error":   "could not open database connection",
+				"details": err.Error(),
 			},
 		)
 
@@ -91,7 +94,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	// Test database connection
 	// --------------------------------------------------------
 
-	if err := database.PingContext(r.Context()); err != nil {
+	if err := database.PingContext(
+		r.Context(),
+	); err != nil {
 
 		writeJSON(
 			w,
@@ -111,15 +116,18 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 
 	var request SignupRequest
 
-	err = json.NewDecoder(r.Body).Decode(&request)
+	err = json.NewDecoder(
+		r.Body,
+	).Decode(&request)
 
 	if err != nil {
 
 		writeJSON(
 			w,
 			http.StatusBadRequest,
-			ErrorResponse{
-				Error: "invalid JSON request",
+			map[string]any{
+				"error":   "invalid JSON request",
+				"details": err.Error(),
 			},
 		)
 
@@ -164,10 +172,13 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	// Insert into testpoint
 	// --------------------------------------------------------
 
-	_, err = database.ExecContext(
+	result, err := database.ExecContext(
 		r.Context(),
 		`
-		INSERT INTO testpoint (id, username)
+		INSERT INTO testpoint (
+			id,
+			username
+		)
 		VALUES ($1, $2)
 		`,
 		request.ID,
@@ -189,6 +200,44 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --------------------------------------------------------
+	// Check rows affected
+	// --------------------------------------------------------
+
+	rowsAffected, err := result.RowsAffected()
+
+	if err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not verify inserted row",
+				"details": err.Error(),
+			},
+		)
+
+		return
+	}
+
+	// --------------------------------------------------------
+	// Verify insertion
+	// --------------------------------------------------------
+
+	if rowsAffected != 1 {
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":         "insert did not affect exactly one row",
+				"rows_affected": rowsAffected,
+			},
+		)
+
+		return
+	}
+
+	// --------------------------------------------------------
 	// Success
 	// --------------------------------------------------------
 
@@ -196,8 +245,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 		w,
 		http.StatusCreated,
 		map[string]any{
-			"message": "data inserted successfully",
-			"table":   "testpoint",
+			"message":       "data inserted successfully",
+			"table":         "testpoint",
+			"rows_affected": rowsAffected,
 			"data": SignupRequest{
 				ID:       request.ID,
 				Username: request.Username,
