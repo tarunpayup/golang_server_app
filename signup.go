@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -9,15 +10,15 @@ import (
 	_ "github.com/lib/pq"
 )
 
-type signupProbeRow struct {
+type SignupRequest struct {
 	ID       int    `json:"id"`
 	Username string `json:"username"`
 }
 
 func SignupHandler(w http.ResponseWriter, r *http.Request) {
 
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
 
 		writeJSON(
 			w,
@@ -39,7 +40,6 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if databaseURL == "" {
-
 		writeJSON(
 			w,
 			http.StatusInternalServerError,
@@ -55,15 +55,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	// Ensure SSL is enabled
 	// --------------------------------------------------------
 
-	if !strings.Contains(
-		databaseURL,
-		"sslmode=",
-	) {
+	if !strings.Contains(databaseURL, "sslmode=") {
 
-		if strings.Contains(
-			databaseURL,
-			"?",
-		) {
+		if strings.Contains(databaseURL, "?") {
 			databaseURL += "&sslmode=require"
 		} else {
 			databaseURL += "?sslmode=require"
@@ -80,13 +74,11 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-
 		writeJSON(
 			w,
 			http.StatusInternalServerError,
-			map[string]any{
-				"error":   "could not open database connection",
-				"details": err.Error(),
+			ErrorResponse{
+				Error: "could not open database connection",
 			},
 		)
 
@@ -99,14 +91,7 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	// Test database connection
 	// --------------------------------------------------------
 
-	var result int
-
-	err = database.QueryRowContext(
-		r.Context(),
-		"SELECT 1",
-	).Scan(&result)
-
-	if err != nil {
+	if err := database.PingContext(r.Context()); err != nil {
 
 		writeJSON(
 			w,
@@ -121,15 +106,73 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --------------------------------------------------------
-	// Test testpoint table
+	// Read JSON request
 	// --------------------------------------------------------
 
-	var count int
+	var request SignupRequest
 
-	err = database.QueryRowContext(
+	err = json.NewDecoder(r.Body).Decode(&request)
+
+	if err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			ErrorResponse{
+				Error: "invalid JSON request",
+			},
+		)
+
+		return
+	}
+
+	// --------------------------------------------------------
+	// Validate data
+	// --------------------------------------------------------
+
+	request.Username = strings.TrimSpace(
+		request.Username,
+	)
+
+	if request.ID <= 0 {
+
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			ErrorResponse{
+				Error: "id must be greater than 0",
+			},
+		)
+
+		return
+	}
+
+	if request.Username == "" {
+
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			ErrorResponse{
+				Error: "username is required",
+			},
+		)
+
+		return
+	}
+
+	// --------------------------------------------------------
+	// Insert into testpoint
+	// --------------------------------------------------------
+
+	_, err = database.ExecContext(
 		r.Context(),
-		"SELECT COUNT(*) FROM testpoint",
-	).Scan(&count)
+		`
+		INSERT INTO testpoint (id, username)
+		VALUES ($1, $2)
+		`,
+		request.ID,
+		request.Username,
+	)
 
 	if err != nil {
 
@@ -137,7 +180,7 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 			w,
 			http.StatusBadGateway,
 			map[string]any{
-				"error":   "database connected, but testpoint table could not be accessed",
+				"error":   "could not insert data into testpoint",
 				"details": err.Error(),
 			},
 		)
@@ -151,12 +194,14 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(
 		w,
-		http.StatusOK,
+		http.StatusCreated,
 		map[string]any{
-			"message":          "Supabase PostgreSQL connection successful",
-			"database_test":    result,
-			"testpoint_exists": true,
-			"row_count":        count,
+			"message": "data inserted successfully",
+			"table":   "testpoint",
+			"data": SignupRequest{
+				ID:       request.ID,
+				Username: request.Username,
+			},
 		},
 	)
 }
