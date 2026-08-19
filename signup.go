@@ -14,45 +14,124 @@ type signupProbeRow struct {
 }
 
 func SignupHandler(w http.ResponseWriter, r *http.Request) {
+
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
-		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+
+		writeJSON(
+			w,
+			http.StatusMethodNotAllowed,
+			ErrorResponse{
+				Error: "method not allowed",
+			},
+		)
+
 		return
 	}
+
+	// --------------------------------------------------------
+	// Get database URL
+	// --------------------------------------------------------
 
 	databaseURL := os.Getenv("DATABASE_URL")
 
 	if databaseURL == "" {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "DATABASE_URL is not configured"})
+
+		writeJSON(
+			w,
+			http.StatusInternalServerError,
+			ErrorResponse{
+				Error: "DATABASE_URL is not configured",
+			},
+		)
+
 		return
 	}
 
-	database, err := sql.Open("postgres", databaseURL)
+	// --------------------------------------------------------
+	// Open database
+	// --------------------------------------------------------
+
+	database, err := sql.Open(
+		"postgres",
+		databaseURL,
+	)
+
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "could not open database connection"})
+
+		writeJSON(
+			w,
+			http.StatusInternalServerError,
+			ErrorResponse{
+				Error: "could not open database connection",
+			},
+		)
+
 		return
 	}
+
 	defer database.Close()
 
-	if err := database.PingContext(r.Context()); err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not connect to database"})
-		return
-	}
+	// --------------------------------------------------------
+	// Test connection
+	// --------------------------------------------------------
 
-	_, err = database.ExecContext(
+	var result int
+
+	err = database.QueryRowContext(
 		r.Context(),
-		"INSERT INTO testpoint (id, username) VALUES ($1, $2)",
-		1,
-		"Tarun Bansal",
-	)
+		"SELECT 1",
+	).Scan(&result)
+
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not insert testpoint row"})
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			ErrorResponse{
+				Error: "could not connect to database",
+			},
+		)
+
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"message": "database connection successful",
-		"table":   "testpoint",
-		"data":    signupProbeRow{ID: 1, Username: "Tarun Bansal"},
-	})
+	// --------------------------------------------------------
+	// Test table
+	// --------------------------------------------------------
+
+	var count int
+
+	err = database.QueryRowContext(
+		r.Context(),
+		"SELECT COUNT(*) FROM testpoint",
+	).Scan(&count)
+
+	if err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			ErrorResponse{
+				Error: "database connected, but testpoint table could not be accessed",
+			},
+		)
+
+		return
+	}
+
+	// --------------------------------------------------------
+	// Success
+	// --------------------------------------------------------
+
+	writeJSON(
+		w,
+		http.StatusOK,
+		map[string]any{
+			"message":          "Supabase PostgreSQL connection successful",
+			"database_test":    result,
+			"testpoint_exists": true,
+			"row_count":        count,
+		},
+	)
 }
