@@ -103,6 +103,7 @@ func StartLoginServer(port string) error {
 
 	mux.HandleFunc("/health", HealthHandler)
 	mux.HandleFunc("/hello", HelloHandler)
+	mux.HandleFunc("/signup", SignupHandler)
 
 	// --------------------------------------------------------
 	// Authentication

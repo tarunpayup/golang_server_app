@@ -1,0 +1,43 @@
+PROMT:
+According to the #sym:SignupScreen form and multiform, you have to create API into #file:signup.go according to the description given in #file:work 
+This will be the first signup form which will uses to create a form. Once the details filled up into first create account form, the details will be saved into the database which is postgres. 
+
+Functional Description
+Initial account signup endpoint that validates uniqueness, checks password policy requirements, stores user credentials, and initiates email/mobile verification.
+System Integration Purpose
+Direct user signup / create account entry point for new firm partners and team members.
+Request Body (application/json)
+
+Copy JSON
+{
+  "fullName": "CA Rajesh Sharma",
+  "username": "sharma_associates",
+  "email": "ca.sharma@example.com",
+  "phone": "+91 98111 22334",
+  "password": "UserSecretPassword@123",
+  "role": "Partner",
+  "firmName": "Sharma & Associates Chartered Accountants",
+  "selectedCountry": {
+    "code": "IN",
+    "dialCode": "+91",
+    "name": "India"
+  }
+}
+Response Payload (HTTP 201)
+
+Copy JSON
+{
+  "success": true,
+  "message": "Account created successfully. Verification OTP dispatched.",
+  "userId": "usr_98124",
+  "requiresVerification": true,
+  "otpDispatchedTo": "ca.sharma@example.com",
+  "user": {
+    "uid": "usr_98124",
+    "email": "ca.sharma@example.com",
+    "username": "sharma_associates",
+    "name": "CA Rajesh Sharma",
+    "role": "Partner",
+    "onboardingCompleted": false
+  }
+}
