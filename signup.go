@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -33,7 +34,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	// Get database URL
 	// --------------------------------------------------------
 
-	databaseURL := os.Getenv("DATABASE_URL")
+	databaseURL := strings.TrimSpace(
+		os.Getenv("DATABASE_URL"),
+	)
 
 	if databaseURL == "" {
 
@@ -46,6 +49,25 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 		)
 
 		return
+	}
+
+	// --------------------------------------------------------
+	// Ensure SSL is enabled
+	// --------------------------------------------------------
+
+	if !strings.Contains(
+		databaseURL,
+		"sslmode=",
+	) {
+
+		if strings.Contains(
+			databaseURL,
+			"?",
+		) {
+			databaseURL += "&sslmode=require"
+		} else {
+			databaseURL += "?sslmode=require"
+		}
 	}
 
 	// --------------------------------------------------------
@@ -62,8 +84,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(
 			w,
 			http.StatusInternalServerError,
-			ErrorResponse{
-				Error: "could not open database connection",
+			map[string]any{
+				"error":   "could not open database connection",
+				"details": err.Error(),
 			},
 		)
 
@@ -73,7 +96,7 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	defer database.Close()
 
 	// --------------------------------------------------------
-	// Test connection
+	// Test database connection
 	// --------------------------------------------------------
 
 	var result int
@@ -88,8 +111,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(
 			w,
 			http.StatusBadGateway,
-			ErrorResponse{
-				Error: "could not connect to database",
+			map[string]any{
+				"error":   "could not connect to database",
+				"details": err.Error(),
 			},
 		)
 
@@ -97,7 +121,7 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --------------------------------------------------------
-	// Test table
+	// Test testpoint table
 	// --------------------------------------------------------
 
 	var count int
@@ -112,8 +136,9 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(
 			w,
 			http.StatusBadGateway,
-			ErrorResponse{
-				Error: "database connected, but testpoint table could not be accessed",
+			map[string]any{
+				"error":   "database connected, but testpoint table could not be accessed",
+				"details": err.Error(),
 			},
 		)
 
