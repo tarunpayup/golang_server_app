@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
+	"database/sql"
 	"net/http"
 	"os"
-	"strings"
+
+	_ "github.com/lib/pq"
 )
 
 type signupProbeRow struct {
@@ -21,45 +20,33 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	supabaseURL := strings.TrimRight(os.Getenv("SUPABASE_URL"), "/")
-	supabaseKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+	databaseURL := os.Getenv("DATABASE_URL")
 
-	if supabaseURL == "" || supabaseKey == "" {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "Supabase environment variables are not configured"})
+	if databaseURL == "" {
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "DATABASE_URL is not configured"})
 		return
 	}
 
-	payload, err := json.Marshal(signupProbeRow{ID: 1, Username: "Tarun Bansal"})
+	database, err := sql.Open("postgres", databaseURL)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "could not prepare database request"})
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "could not open database connection"})
+		return
+	}
+	defer database.Close()
+
+	if err := database.PingContext(r.Context()); err != nil {
+		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not connect to database"})
 		return
 	}
 
-	request, err := http.NewRequestWithContext(
+	_, err = database.ExecContext(
 		r.Context(),
-		http.MethodPost,
-		fmt.Sprintf("%s/rest/v1/testpoint", supabaseURL),
-		bytes.NewReader(payload),
+		"INSERT INTO testpoint (id, username) VALUES ($1, $2)",
+		1,
+		"Tarun Bansal",
 	)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "could not create database request"})
-		return
-	}
-
-	request.Header.Set("apikey", supabaseKey)
-	request.Header.Set("Authorization", "Bearer "+supabaseKey)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Prefer", "return=representation")
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not connect to Supabase"})
-		return
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: fmt.Sprintf("Supabase returned HTTP %d", response.StatusCode)})
+		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not insert testpoint row"})
 		return
 	}
 
