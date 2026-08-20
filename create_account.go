@@ -8,7 +8,13 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	_ "github.com/lib/pq"
 )
+
+// ============================================================
+// REQUEST MODELS
+// ============================================================
 
 type CountryCodeRequest struct {
 	Code     string `json:"code"`
@@ -28,15 +34,20 @@ type CreateAccountRequest struct {
 	Name                string             `json:"name"`
 	FirmRegisteredEmail string             `json:"firmRegisteredEmail"`
 	MembershipGSTIN     string             `json:"membershipGstin"`
-	OrganizationID      string             `json:"organizationId"`
+	OrganizationID      int64              `json:"organizationId"`
 	OnboardingCompleted bool               `json:"onboardingCompleted"`
 	SelectedCountry     CountryCodeRequest `json:"selectedCountry"`
 }
+
+// ============================================================
+// RESPONSE MODELS
+// ============================================================
 
 type CreateAccountResponse struct {
 	Success              bool              `json:"success"`
 	Message              string            `json:"message"`
 	UserID               string            `json:"userId"`
+	OrganizationID       int64             `json:"organizationId"`
 	RequiresVerification bool              `json:"requiresVerification"`
 	OTPDispatchedTo      string            `json:"otpDispatchedTo"`
 	User                 CreateAccountUser `json:"user"`
@@ -51,107 +62,357 @@ type CreateAccountUser struct {
 	OnboardingCompleted bool   `json:"onboardingCompleted"`
 }
 
+// ============================================================
+// CREATE ACCOUNT HANDLER
+// ============================================================
+
 func CreateAccountHandler(w http.ResponseWriter, r *http.Request) {
+
+	// --------------------------------------------------------
+	// HTTP method
+	// --------------------------------------------------------
+
 	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+
+		w.Header().Set(
+			"Allow",
+			http.MethodPost,
+		)
+
+		writeJSON(
+			w,
+			http.StatusMethodNotAllowed,
+			ErrorResponse{
+				Error: "method not allowed",
+			},
+		)
+
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	// --------------------------------------------------------
+	// Limit request body
+	// --------------------------------------------------------
+
+	r.Body = http.MaxBytesReader(
+		w,
+		r.Body,
+		1<<20,
+	)
+
+	// --------------------------------------------------------
+	// Decode JSON
+	// --------------------------------------------------------
+
 	var request CreateAccountRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid JSON request"})
+
+	if err := json.NewDecoder(
+		r.Body,
+	).Decode(&request); err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			map[string]any{
+				"error":   "invalid JSON request",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
 
-	normalizeCreateAccountRequest(&request)
-	if validationError := validateCreateAccountRequest(request); validationError != "" {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: validationError})
+	// --------------------------------------------------------
+	// Normalize request
+	// --------------------------------------------------------
+
+	normalizeCreateAccountRequest(
+		&request,
+	)
+
+	// --------------------------------------------------------
+	// Validate request
+	// --------------------------------------------------------
+
+	if validationError := validateCreateAccountRequest(
+		request,
+	); validationError != "" {
+
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			ErrorResponse{
+				Error: validationError,
+			},
+		)
+
 		return
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
+	// --------------------------------------------------------
+	// DATABASE_URL
+	// --------------------------------------------------------
+
+	databaseURL := strings.TrimSpace(
+		os.Getenv("DATABASE_URL"),
+	)
+
 	if databaseURL == "" {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "DATABASE_URL is not configured"})
+
+		writeJSON(
+			w,
+			http.StatusInternalServerError,
+			ErrorResponse{
+				Error: "DATABASE_URL is not configured",
+			},
+		)
+
 		return
-	}
-	if !strings.Contains(databaseURL, "sslmode=") {
-		separator := "?"
-		if strings.Contains(databaseURL, "?") {
-			separator = "&"
-		}
-		databaseURL += separator + "sslmode=require"
 	}
 
-	database, err := sql.Open("postgres", databaseURL)
+	// --------------------------------------------------------
+	// Ensure SSL
+	// --------------------------------------------------------
+
+	if !strings.Contains(
+		databaseURL,
+		"sslmode=",
+	) {
+
+		if strings.Contains(
+			databaseURL,
+			"?",
+		) {
+			databaseURL += "&sslmode=require"
+		} else {
+			databaseURL += "?sslmode=require"
+		}
+	}
+
+	// --------------------------------------------------------
+	// Open database
+	// --------------------------------------------------------
+
+	database, err := sql.Open(
+		"postgres",
+		databaseURL,
+	)
+
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "could not open database connection"})
+
+		writeJSON(
+			w,
+			http.StatusInternalServerError,
+			map[string]any{
+				"error":   "could not open database connection",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
+
 	defer database.Close()
 
-	if err := database.PingContext(r.Context()); err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not connect to database"})
+	// --------------------------------------------------------
+	// Test database connection
+	// --------------------------------------------------------
+
+	if err := database.PingContext(
+		r.Context(),
+	); err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not connect to database",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
 
-	transaction, err := database.BeginTx(r.Context(), nil)
+	// --------------------------------------------------------
+	// Start transaction
+	// --------------------------------------------------------
+
+	transaction, err := database.BeginTx(
+		r.Context(),
+		nil,
+	)
+
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not start account transaction"})
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not start account transaction",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
 
 	defer transaction.Rollback()
 
+	// --------------------------------------------------------
+	// Check username/email uniqueness
+	// --------------------------------------------------------
+
 	var existing bool
+
 	err = transaction.QueryRowContext(
 		r.Context(),
-		"SELECT EXISTS (SELECT 1 FROM users WHERE username = $1 OR email = $2)",
+		`
+		SELECT EXISTS (
+			SELECT 1
+			FROM users
+			WHERE username = $1
+			   OR email = $2
+		)
+		`,
 		request.Username,
 		request.Email,
 	).Scan(&existing)
+
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not check account uniqueness"})
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not check account uniqueness",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
+
 	if existing {
-		writeJSON(w, http.StatusConflict, ErrorResponse{Error: "username or email already exists"})
+
+		writeJSON(
+			w,
+			http.StatusConflict,
+			ErrorResponse{
+				Error: "username or email already exists",
+			},
+		)
+
 		return
 	}
+
+	// --------------------------------------------------------
+	// Generate user ID
+	// --------------------------------------------------------
+
+	userID := strings.TrimSpace(
+		request.UID,
+	)
+
+	if userID == "" {
+
+		userID =
+			"usr_" +
+				time.Now().Format(
+					"20060102150405.000000",
+				)
+	}
+
+	// --------------------------------------------------------
+	// Create organization
+	// --------------------------------------------------------
 
 	organizationName := request.FirmName
+
 	organizationEmail := request.Email
+
+	// For non-partner users, use the registered
+	// firm email as the organization identity.
 	if request.Role != "Partner" {
-		organizationName = "Firm (" + request.FirmRegisteredEmail + ")"
+
+		organizationEmail =
+			request.FirmRegisteredEmail
+
+		organizationName =
+			"Firm (" +
+				request.FirmRegisteredEmail +
+				")"
 	}
 
-	var organizationID string
+	var organizationID int64
+
 	err = transaction.QueryRowContext(
 		r.Context(),
-		`INSERT INTO organizations (name, email, phone, gstin)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING org_id`,
+		`
+		INSERT INTO organizations
+			(name, email, phone, gstin)
+		VALUES
+			($1, $2, $3, $4)
+		RETURNING org_id
+		`,
 		organizationName,
 		organizationEmail,
 		request.Phone,
 		request.MembershipGSTIN,
 	).Scan(&organizationID)
+
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not create organization"})
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not create organization",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
 
-	userID := request.UID
-	if userID == "" {
-		userID = "usr_" + time.Now().Format("20060102150405.000000")
-	}
+	// --------------------------------------------------------
+	// Create user
+	// --------------------------------------------------------
+
+	// IMPORTANT:
+	// organization_id is BIGINT and receives organizationID
+	// directly from organizations.org_id.
 
 	_, err = transaction.ExecContext(
 		r.Context(),
-		`INSERT INTO users
-		 (id, organization_id, uid, name, username, email, phone, role, password, onboarding_completed)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		`
+		INSERT INTO users
+		(
+			id,
+			organization_id,
+			uid,
+			name,
+			username,
+			email,
+			phone,
+			role,
+			password,
+			onboarding_completed
+		)
+		VALUES
+		(
+			$1,
+			$2,
+			$3,
+			$4,
+			$5,
+			$6,
+			$7,
+			$8,
+			$9,
+			$10
+		)
+		`,
 		userID,
 		organizationID,
 		userID,
@@ -163,106 +424,335 @@ func CreateAccountHandler(w http.ResponseWriter, r *http.Request) {
 		hashPassword(request.Password),
 		request.OnboardingCompleted,
 	)
+
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not create user account"})
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not create user account",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
+
+	// --------------------------------------------------------
+	// Commit transaction
+	// --------------------------------------------------------
 
 	if err := transaction.Commit(); err != nil {
-		writeJSON(w, http.StatusBadGateway, ErrorResponse{Error: "could not commit account transaction"})
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not commit account transaction",
+				"details": err.Error(),
+			},
+		)
+
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, CreateAccountResponse{
-		Success:              true,
-		Message:              "Account created successfully. Verification OTP dispatched.",
-		UserID:               userID,
-		RequiresVerification: true,
-		OTPDispatchedTo:      request.Email,
-		User: CreateAccountUser{
-			UID:                 userID,
-			Email:               request.Email,
-			Username:            request.Username,
-			Name:                request.FullName,
-			Role:                request.Role,
-			OnboardingCompleted: request.OnboardingCompleted,
+	// --------------------------------------------------------
+	// Response
+	// --------------------------------------------------------
+
+	writeJSON(
+		w,
+		http.StatusCreated,
+		CreateAccountResponse{
+			Success: true,
+
+			Message: "Account created successfully. Verification required.",
+
+			UserID: userID,
+
+			OrganizationID: organizationID,
+
+			RequiresVerification: true,
+
+			OTPDispatchedTo: "",
+
+			User: CreateAccountUser{
+				UID: userID,
+
+				Email: request.Email,
+
+				Username: request.Username,
+
+				Name: request.FullName,
+
+				Role: request.Role,
+
+				OnboardingCompleted: request.OnboardingCompleted,
+			},
 		},
-	})
+	)
 }
 
-func normalizeCreateAccountRequest(request *CreateAccountRequest) {
-	request.UID = strings.TrimSpace(request.UID)
-	request.FullName = strings.TrimSpace(request.FullName)
+// ============================================================
+// NORMALIZE REQUEST
+// ============================================================
+
+func normalizeCreateAccountRequest(
+	request *CreateAccountRequest,
+) {
+
+	request.UID =
+		strings.TrimSpace(
+			request.UID,
+		)
+
+	request.FullName =
+		strings.TrimSpace(
+			request.FullName,
+		)
+
 	if request.FullName == "" {
-		request.FullName = strings.TrimSpace(request.Name)
+
+		request.FullName =
+			strings.TrimSpace(
+				request.Name,
+			)
 	}
-	request.Username = strings.ToLower(strings.TrimSpace(request.Username))
-	request.Email = strings.ToLower(strings.TrimSpace(request.Email))
-	request.Phone = strings.TrimSpace(request.Phone)
-	request.Role = strings.TrimSpace(request.Role)
-	request.FirmName = strings.TrimSpace(request.FirmName)
-	request.FirmRegisteredEmail = strings.ToLower(strings.TrimSpace(request.FirmRegisteredEmail))
-	request.MembershipGSTIN = strings.TrimSpace(request.MembershipGSTIN)
+
+	request.Username =
+		strings.ToLower(
+			strings.TrimSpace(
+				request.Username,
+			),
+		)
+
+	request.Email =
+		strings.ToLower(
+			strings.TrimSpace(
+				request.Email,
+			),
+		)
+
+	request.Phone =
+		strings.TrimSpace(
+			request.Phone,
+		)
+
+	request.Role =
+		strings.TrimSpace(
+			request.Role,
+		)
+
+	request.FirmName =
+		strings.TrimSpace(
+			request.FirmName,
+		)
+
+	request.FirmRegisteredEmail =
+		strings.ToLower(
+			strings.TrimSpace(
+				request.FirmRegisteredEmail,
+			),
+		)
+
+	request.MembershipGSTIN =
+		strings.ToUpper(
+			strings.TrimSpace(
+				request.MembershipGSTIN,
+			),
+		)
 }
 
-func validateCreateAccountRequest(request CreateAccountRequest) string {
-	if request.FullName == "" || request.Username == "" || request.Email == "" || request.Phone == "" || request.Password == "" || request.Role == "" {
+// ============================================================
+// VALIDATION
+// ============================================================
+
+func validateCreateAccountRequest(
+	request CreateAccountRequest,
+) string {
+
+	if request.FullName == "" ||
+		request.Username == "" ||
+		request.Email == "" ||
+		request.Phone == "" ||
+		request.Password == "" ||
+		request.Role == "" {
+
 		return "fullName, username, email, phone, password, and role are required"
 	}
-	if request.Role == "Partner" && request.FirmName == "" {
-		return "firmName is required for Partner accounts"
+
+	// --------------------------------------------------------
+	// Validate role
+	// --------------------------------------------------------
+
+	switch request.Role {
+
+	case "Partner":
+		if request.FirmName == "" {
+			return "firmName is required for Partner accounts"
+		}
+
+	case "Manager", "Staff":
+		if request.FirmRegisteredEmail == "" {
+			return "firmRegisteredEmail is required for Manager and Staff accounts"
+		}
+
+	default:
+		return "role must be Partner, Manager, or Staff"
 	}
-	if request.Role != "Partner" && request.FirmRegisteredEmail == "" {
-		return "firmRegisteredEmail is required for non-Partner accounts"
-	}
-	if !validateEmailAddress(request.Email) {
+
+	// --------------------------------------------------------
+	// Validate email
+	// --------------------------------------------------------
+
+	if !validateEmailAddress(
+		request.Email,
+	) {
+
 		return "email must be valid"
 	}
-	if len(request.Password) < 8 || !containsUppercase(request.Password) || !containsLowercase(request.Password) || !containsSymbol(request.Password) || countDigits(request.Password) < 5 {
-		return "password must contain an uppercase letter, a lowercase letter, a symbol, and at least 5 numbers"
+
+	// --------------------------------------------------------
+	// Validate firm email
+	// --------------------------------------------------------
+
+	if request.FirmRegisteredEmail != "" &&
+		!validateEmailAddress(
+			request.FirmRegisteredEmail,
+		) {
+
+		return "firmRegisteredEmail must be valid"
 	}
+
+	// --------------------------------------------------------
+	// Validate password
+	// --------------------------------------------------------
+
+	if len(request.Password) < 8 {
+
+		return "password must contain at least 8 characters"
+	}
+
+	if !containsUppercase(
+		request.Password,
+	) {
+
+		return "password must contain an uppercase letter"
+	}
+
+	if !containsLowercase(
+		request.Password,
+	) {
+
+		return "password must contain a lowercase letter"
+	}
+
+	if !containsSymbol(
+		request.Password,
+	) {
+
+		return "password must contain a symbol"
+	}
+
+	if countDigits(
+		request.Password,
+	) < 5 {
+
+		return "password must contain at least 5 numbers"
+	}
+
 	return ""
 }
 
-var createAccountEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+// ============================================================
+// EMAIL VALIDATION
+// ============================================================
 
-func validateEmailAddress(email string) bool {
-	return createAccountEmailPattern.MatchString(email)
+var createAccountEmailPattern = regexp.MustCompile(
+	`^[^\s@]+@[^\s@]+\.[^\s@]+$`,
+)
+
+func validateEmailAddress(
+	email string,
+) bool {
+
+	return createAccountEmailPattern.MatchString(
+		email,
+	)
 }
 
-func containsUppercase(value string) bool {
+// ============================================================
+// PASSWORD HELPERS
+// ============================================================
+
+func containsUppercase(
+	value string,
+) bool {
+
 	for _, character := range value {
-		if character >= 'A' && character <= 'Z' {
+
+		if character >= 'A' &&
+			character <= 'Z' {
+
 			return true
 		}
 	}
+
 	return false
 }
 
-func containsLowercase(value string) bool {
+func containsLowercase(
+	value string,
+) bool {
+
 	for _, character := range value {
-		if character >= 'a' && character <= 'z' {
+
+		if character >= 'a' &&
+			character <= 'z' {
+
 			return true
 		}
 	}
+
 	return false
 }
 
-func containsSymbol(value string) bool {
+func containsSymbol(
+	value string,
+) bool {
+
+	symbols :=
+		`!@#$%^&*()_+-=[]{};':"\|,.<>/?~` + "`"
+
 	for _, character := range value {
-		if strings.ContainsRune(`!@#$%^&*()_+-=[]{};':"\\|,.<>/?~`+"`", character) {
+
+		if strings.ContainsRune(
+			symbols,
+			character,
+		) {
+
 			return true
 		}
 	}
+
 	return false
 }
 
-func countDigits(value string) int {
+func countDigits(
+	value string,
+) int {
+
 	digits := 0
+
 	for _, character := range value {
-		if character >= '0' && character <= '9' {
+
+		if character >= '0' &&
+			character <= '9' {
+
 			digits++
 		}
 	}
+
 	return digits
 }
