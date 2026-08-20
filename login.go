@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -87,62 +86,6 @@ var supportedSSOProviders = map[string]bool{
 	"Microsoft 365": true,
 	"Apple ID":      true,
 	"Facebook":      true,
-}
-
-// ============================================================
-// SERVER / ROUTES
-// ============================================================
-
-func StartLoginServer(port string) error {
-
-	mux := http.NewServeMux()
-
-	// --------------------------------------------------------
-	// Health
-	// --------------------------------------------------------
-
-	mux.HandleFunc("/health", HealthHandler)
-	mux.HandleFunc("/hello", HelloHandler)
-	mux.HandleFunc("/signup", SignupHandler)
-	mux.HandleFunc("/api/auth/register", CreateAccountHandler)
-
-	// --------------------------------------------------------
-	// Authentication
-	// --------------------------------------------------------
-
-	mux.HandleFunc("/api/login", LoginHandler)
-
-	mux.HandleFunc(
-		"/api/login/sso",
-		SSOLoginHandler,
-	)
-
-	mux.HandleFunc(
-		"/api/login/guest",
-		GuestLoginHandler,
-	)
-
-	addr := "0.0.0.0:" + port
-
-	fmt.Printf("CAOS Login API running on %s\n", addr)
-
-	return http.ListenAndServe(addr, corsMiddleware(mux))
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Max-Age", "600")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }
 
 // ============================================================
