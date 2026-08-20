@@ -1,0 +1,93 @@
+SignupScreen schema and state field reference
+==============================================
+
+Source: src/components/auth/SignupScreen.tsx
+
+Form fields
+-----------
+
+| Field name | Type | State handler | Initial value | Notes |
+|------------|------|---------------|---------------|-------|
+| firmName | string | firmName / setFirmName | "" | Required when selectedRole is Partner. Updated from the firm name input. |
+| firmRegisteredEmail | string | firmRegisteredEmail / setFirmRegisteredEmail | "" | Required for non-Partner roles. Updated from the registered firm email input. |
+| fullName | string | fullName / setFullName | "" | Required. Updated from the full name input. |
+| username | string | username / setUsername | "" | Required. Input is converted to lowercase and trimmed before storage. |
+| email | string | email / setEmail | "" | Required work email. Updated from the email input and validated by validateEmail. |
+| phone | string | phone / setPhone | "" | Required. Non-digit, non-space, and non-hyphen characters are removed before storage. |
+| selectedCountry | CountryCode | selectedCountry / setSelectedCountry | COUNTRY_CODES[0] | Country selector. Stores code, dialCode, flag, name, and digit count. |
+| password | string | password / setPassword | "" | Required. Used for Firebase authentication and registration API payload. |
+| confirmPassword | string | confirmPassword / setConfirmPassword | "" | Required. Must match password. |
+| selectedRole | RoleType | selectedRole / setSelectedRole | "Partner" | One of Partner, Manager, Senior Associate, or Client. |
+| membershipGstin | string | membershipGstin / setMembershipGstin | "" | Optional professional registration, GSTIN, or ID. |
+| termsAgreed | boolean | termsAgreed / setTermsAgreed | true | Required terms and policies checkbox. |
+
+Derived form values
+-------------------
+
+| Name | Type | Derived from | Purpose |
+|------|------|--------------|---------|
+| usernameStatus | "idle" | "checking" | "available" | "unavailable" | username and availability API | Tracks username availability. |
+| usernameMessage | string | username availability result | Displays availability feedback. |
+| pwdHasCapital | boolean | password | Requires at least one uppercase letter. |
+| pwdHasSmall | boolean | password | Requires at least one lowercase letter. |
+| pwdHasSymbol | boolean | password | Requires at least one symbol. |
+| pwdDigitsCount | number | password | Counts numeric characters. |
+| pwdHas5Numbers | boolean | pwdDigitsCount | Requires at least five numbers. |
+| isPasswordValid | boolean | password requirement flags | Enables password validation to pass. |
+
+UI and submission state
+-----------------------
+
+| Name | Type | State handler | Initial value | Purpose |
+|------|------|---------------|---------------|---------|
+| showPassword | boolean | showPassword / setShowPassword | false | Toggles password visibility. |
+| showConfirmPassword | boolean | showConfirmPassword / setShowConfirmPassword | false | Toggles confirmation password visibility. |
+| isPasswordFocused | boolean | isPasswordFocused / setIsPasswordFocused | false | Shows the live password requirements panel while focused. |
+| isSubmitting | boolean | isSubmitting / setIsSubmitting | false | Disables submit actions and shows loading state. |
+| errorMessage | string | errorMessage / setErrorMessage | "" | Displays validation, OTP, and registration errors. |
+| step | "form" | "verify" | step / setStep | "form" | Controls whether the account form or verification form is shown. |
+| otpCode | string | otpCode / setOtpCode | "" | Stores the code entered or auto-filled by the user. |
+| generatedCode | string | generatedCode / setGeneratedCode | "849201" | Stores the generated six-digit verification code. |
+| verificationSuccess | boolean | verificationSuccess / setVerificationSuccess | false | Indicates that verification has completed successfully. |
+| resendNotice | string | resendNotice / setResendNotice | "" | Displays the OTP resend confirmation. |
+| emailPreviewUrl | string or null | emailPreviewUrl / setEmailPreviewUrl | null | Stores the Ethereal sandbox email preview URL. |
+| isSandboxMode | boolean | isSandboxMode / setIsSandboxMode | false | Indicates that OTP delivery is using the local or sandbox fallback. |
+
+Handlers that write or consume the data
+----------------------------------------
+
+| Handler variable | Event or trigger | Data handled | Behavior |
+|------------------|-----------------|--------------|----------|
+| setFirmName | `onChange` | firmName | Stores the firm or practice name. |
+| setFirmRegisteredEmail | `onChange` | firmRegisteredEmail | Stores the existing firm email. |
+| setFullName | `onChange` | fullName | Stores the user's full name. |
+| setSelectedCountry | country `<select>` `onChange` | selectedCountry | Stores the selected country object. |
+| setPhone | phone `onChange` | phone | Stores the normalized phone value after removing unsupported characters. |
+| setUsername | username `onChange` | username | Stores a lowercase, trimmed username. |
+| setEmail | `onChange` | email | Stores the work email. |
+| setPassword | `onChange` | password | Stores the password. |
+| setConfirmPassword | `onChange` | confirmPassword | Stores the confirmation password. |
+| setShowPassword | password visibility `onClick` | showPassword | Toggles password visibility. |
+| setShowConfirmPassword | confirmation visibility `onClick` | showConfirmPassword | Toggles confirmation password visibility. |
+| setMembershipGstin | `onChange` | membershipGstin | Stores the optional registration or GSTIN value. |
+| setTermsAgreed | checkbox `onChange` | termsAgreed | Stores whether terms are accepted. |
+| setSelectedRole | role button `onClick` | selectedRole | Sets Partner, Manager, Senior Associate, or Client. |
+| handleSendVerificationCode | form `onSubmit` | All form fields | Validates the form, sends email and mobile OTP requests, and changes step to verify. |
+| sendOtpEmail | Called by verification and resend handlers | email, phone, fullName, generatedCode | Sends requests to `/api/send-otp` and `/api/send-mobile-otp`. |
+| handleResendOtp | Resend button `onClick` | email, phone, fullName | Generates a new code and sends the OTP again. |
+| setOtpCode | OTP `onChange` or Auto-Fill `onClick` | otpCode | Stores the entered or generated verification code. |
+| handleVerifyAndProceed | verification form `onSubmit` | otpCode and all form fields | Verifies the code, creates the Firebase user, calls `/api/auth/register`, and completes signup. |
+| setStep | Edit Details `onClick` | step | Returns from verification to the account form. |
+| setUsernameStatus / setUsernameMessage | debounced username availability effect | username, users | Checks local users and `/api/check-username` after three seconds of inactivity. |
+
+Registration API payload
+------------------------
+
+The final registration request is sent to `/api/auth/register` with:
+
+uid, username, password, email, name, role, firmName, organizationId,
+phone, membershipGstin, and onboardingCompleted.
+
+`onRequireOnboarding` receives email, name, uid, firmName, phone, role,
+and membershipGstin after registration. If onboarding is not required,
+the component sets the current user ID and calls `onSignupSuccess`.
