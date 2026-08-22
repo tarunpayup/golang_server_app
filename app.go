@@ -65,6 +65,11 @@ func StartServer(port string) error {
 		CreateAccountHandler,
 	)
 
+	mux.HandleFunc(
+		"/api/offices/store",
+		OfficeStoreHandler,
+	)
+
 	// --------------------------------------------------------
 	// Authentication
 	// --------------------------------------------------------
