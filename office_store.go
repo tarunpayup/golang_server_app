@@ -20,24 +20,185 @@ type OfficeStoreRequest struct {
 }
 
 type OfficeStoreRecord struct {
-	OfficeName   string `json:"office_name"`
-	OfficeType   string `json:"office_type"`
-	BranchRep    string `json:"branch_rep"`
-	AddressOne   string `json:"address_one"`
-	AddressTwo   string `json:"address_two"`
-	AddressThree string `json:"address_three"`
-	City         string `json:"city"`
-	State        string `json:"state"`
-	Country      string `json:"country"`
-	Pincode      string `json:"pincode"`
-	Mobile       string `json:"mobile"`
-	Phone        string `json:"phone"`
+	OrganizationID int64  `json:"organization_id"`
+	OfficeName     string `json:"office_name"`
+	OfficeType     string `json:"office_type"`
+	BranchRep      string `json:"branch_rep"`
+	AddressOne     string `json:"address_one"`
+	AddressTwo     string `json:"address_two"`
+	AddressThree   string `json:"address_three"`
+	City           string `json:"city"`
+	State          string `json:"state"`
+	Country        string `json:"country"`
+	Pincode        string `json:"pincode"`
+	Mobile         string `json:"mobile"`
+	Phone          string `json:"phone"`
 }
 
 type OfficeStoreResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Count   int    `json:"count"`
+}
+
+type OrganizationLookupResponse struct {
+	Success        bool  `json:"success"`
+	OrganizationID int64 `json:"organizationId"`
+}
+
+// ============================================================
+// ORGANIZATION LOOKUP HANDLER
+// ============================================================
+
+func OrganizationByEmailHandler(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != http.MethodGet {
+
+		w.Header().Set(
+			"Allow",
+			http.MethodGet,
+		)
+
+		writeJSON(
+			w,
+			http.StatusMethodNotAllowed,
+			ErrorResponse{
+				Error: "method not allowed",
+			},
+		)
+
+		return
+	}
+
+	email := strings.TrimSpace(
+		r.URL.Query().Get("email"),
+	)
+
+	if email == "" {
+
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			ErrorResponse{
+				Error: "email is required",
+			},
+		)
+
+		return
+	}
+
+	databaseURL := strings.TrimSpace(
+		os.Getenv("DATABASE_URL"),
+	)
+
+	if databaseURL == "" {
+
+		writeJSON(
+			w,
+			http.StatusInternalServerError,
+			ErrorResponse{
+				Error: "DATABASE_URL is not configured",
+			},
+		)
+
+		return
+	}
+
+	if !strings.Contains(
+		databaseURL,
+		"sslmode=",
+	) {
+
+		if strings.Contains(
+			databaseURL,
+			"?",
+		) {
+
+			databaseURL += "&sslmode=require"
+
+		} else {
+
+			databaseURL += "?sslmode=require"
+		}
+	}
+
+	database, err := sql.Open(
+		"postgres",
+		databaseURL,
+	)
+
+	if err != nil {
+
+		writeJSON(
+			w,
+			http.StatusInternalServerError,
+			map[string]any{
+				"error":   "could not open database connection",
+				"details": err.Error(),
+			},
+		)
+
+		return
+	}
+
+	defer database.Close()
+
+	var organizationID int64
+
+	err = database.QueryRowContext(
+		r.Context(),
+		`
+		SELECT o.org_id
+		FROM organizations o
+		LEFT JOIN users u
+			ON u.organization_id = o.org_id
+		WHERE LOWER(u.email) = LOWER($1)
+		   OR LOWER(o.email) = LOWER($1)
+		ORDER BY
+			CASE
+				WHEN LOWER(u.email) = LOWER($1) THEN 0
+				ELSE 1
+			END
+		LIMIT 1
+		`,
+		email,
+	).Scan(&organizationID)
+
+	if err == sql.ErrNoRows {
+
+		writeJSON(
+			w,
+			http.StatusNotFound,
+			ErrorResponse{
+				Error: "organization not found for email",
+			},
+		)
+
+		return
+	}
+
+	if err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":   "could not fetch organization",
+				"details": err.Error(),
+			},
+		)
+
+		return
+	}
+
+	writeJSON(
+		w,
+		http.StatusOK,
+		OrganizationLookupResponse{
+			Success:        true,
+			OrganizationID: organizationID,
+		},
+	)
 }
 
 // ============================================================
@@ -200,6 +361,32 @@ func OfficeStoreHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer transaction.Rollback()
 
+	organizationID := request.Offices[0].OrganizationID
+
+	_, err = transaction.ExecContext(
+		r.Context(),
+		`
+		DELETE FROM office_dit
+		WHERE organization_id = $1
+		`,
+		organizationID,
+	)
+
+	if err != nil {
+
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]any{
+				"error":           "could not clear existing office information",
+				"organization_id": organizationID,
+				"details":         err.Error(),
+			},
+		)
+
+		return
+	}
+
 	for _, office := range request.Offices {
 
 		_, err = transaction.ExecContext(
@@ -207,6 +394,7 @@ func OfficeStoreHandler(w http.ResponseWriter, r *http.Request) {
 			`
 			INSERT INTO office_dit
 			(
+				organization_id,
 				office_name,
 				office_type,
 				branch_rep,
@@ -233,9 +421,11 @@ func OfficeStoreHandler(w http.ResponseWriter, r *http.Request) {
 				$9,
 				$10,
 				$11,
-				$12
+				$12,
+				$13
 			)
 			`,
+			office.OrganizationID,
 			office.OfficeName,
 			office.OfficeType,
 			office.BranchRep,
@@ -365,7 +555,17 @@ func validateOfficeStoreRequest(request OfficeStoreRequest) string {
 		return "at least one office is required"
 	}
 
+	organizationID := request.Offices[0].OrganizationID
+
 	for _, office := range request.Offices {
+
+		if office.OrganizationID <= 0 {
+			return "organization_id is required"
+		}
+
+		if office.OrganizationID != organizationID {
+			return "all offices must belong to the same organization_id"
+		}
 
 		if office.OfficeName == "" {
 			return "office_name is required"

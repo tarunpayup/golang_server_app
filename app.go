@@ -70,6 +70,11 @@ func StartServer(port string) error {
 		OfficeStoreHandler,
 	)
 
+	mux.HandleFunc(
+		"/api/organizations/by-email",
+		OrganizationByEmailHandler,
+	)
+
 	// --------------------------------------------------------
 	// Authentication
 	// --------------------------------------------------------
