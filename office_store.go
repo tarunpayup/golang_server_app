@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	_ "github.com/lib/pq"
@@ -296,6 +297,8 @@ func OfficeStoreHandler(w http.ResponseWriter, r *http.Request) {
 
 func normalizeOfficeStoreRequest(request *OfficeStoreRequest) {
 
+	phoneCleaner := regexp.MustCompile(`[^\d+]`)
+
 	for index := range request.Offices {
 
 		office := &request.Offices[index]
@@ -340,12 +343,18 @@ func normalizeOfficeStoreRequest(request *OfficeStoreRequest) {
 			office.Pincode,
 		)
 
-		office.Mobile = strings.TrimSpace(
-			office.Mobile,
+		office.Mobile = phoneCleaner.ReplaceAllString(
+			strings.TrimSpace(
+				office.Mobile,
+			),
+			"",
 		)
 
-		office.Phone = strings.TrimSpace(
-			office.Phone,
+		office.Phone = phoneCleaner.ReplaceAllString(
+			strings.TrimSpace(
+				office.Phone,
+			),
+			"",
 		)
 	}
 }
@@ -362,8 +371,20 @@ func validateOfficeStoreRequest(request OfficeStoreRequest) string {
 			return "office_name is required"
 		}
 
+		if len(office.OfficeName) > 50 {
+			return "office_name must be 50 characters or fewer"
+		}
+
 		if office.OfficeType == "" {
 			return "office_type is required"
+		}
+
+		if len(office.OfficeType) > 50 {
+			return "office_type must be 50 characters or fewer"
+		}
+
+		if len(office.BranchRep) > 50 {
+			return "branch_rep must be 50 characters or fewer"
 		}
 
 		if office.AddressOne == "" {
@@ -374,8 +395,32 @@ func validateOfficeStoreRequest(request OfficeStoreRequest) string {
 			return "city is required"
 		}
 
+		if len(office.City) > 20 {
+			return "city must be 20 characters or fewer"
+		}
+
+		if len(office.State) > 20 {
+			return "state must be 20 characters or fewer"
+		}
+
+		if len(office.Country) > 20 {
+			return "country must be 20 characters or fewer"
+		}
+
 		if office.Pincode == "" {
 			return "pincode is required"
+		}
+
+		if len(office.Pincode) > 6 {
+			return "pincode must be 6 characters or fewer"
+		}
+
+		if len(office.Mobile) > 15 {
+			return "mobile must be 15 characters or fewer"
+		}
+
+		if len(office.Phone) > 15 {
+			return "phone must be 15 characters or fewer"
 		}
 	}
 
